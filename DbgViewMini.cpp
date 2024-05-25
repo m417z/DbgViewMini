@@ -47,7 +47,7 @@ public:
 
 struct SWinDbgMonitor
 {
-	SWinDbgMonitor()
+	SWinDbgMonitor(const char* pattern = nullptr) : Pattern(pattern)
 	{
 		LocalCaptureEnabled = FALSE;
 		LocalBufferReadyEvent = NULL;
@@ -60,8 +60,6 @@ struct SWinDbgMonitor
 		GlobalDataReadyEvent = NULL;
 		GlobalDataBufferHandle = NULL;
 		GlobalDebugBuffer = NULL;
-
-		KernelCaptureEnabled = FALSE;
 
 		DbgCreateSecurityAttributes();
 	}
@@ -85,7 +83,7 @@ struct SWinDbgMonitor
 	HANDLE GlobalDataBufferHandle;
 	PDBWIN_PAGE_BUFFER GlobalDebugBuffer;
 
-	BOOLEAN KernelCaptureEnabled;
+	const char* Pattern;
 
 	BOOL DbgCreateSecurityAttributes()
 	{
@@ -193,6 +191,49 @@ struct SWinDbgMonitor
 	}
 };
 
+// https://github.com/tidwall/match.c
+//
+// match returns true if str matches pattern. This is a very
+// simple wildcard match where '*' matches on any number characters
+// and '?' matches on any one character.
+//
+// pattern:
+//   { term }
+// term:
+// 	 '*'         matches any sequence of non-Separator characters
+// 	 '?'         matches any single non-Separator character
+// 	 c           matches character c (c != '*', '?')
+// 	'\\' c       matches character c
+bool match(const char* pat, size_t plen, const char* str, size_t slen)
+{
+	while (plen > 0)
+	{
+		if (pat[0] == '\\')
+		{
+			if (plen == 1) return false;
+			pat++; plen--;
+		}
+		else if (pat[0] == '*')
+		{
+			if (plen == 1) return true;
+			if (pat[1] == '*')
+			{
+				pat++; plen--;
+				continue;
+			}
+			if (match(pat + 1, plen - 1, str, slen)) return true;
+			if (slen == 0) return false;
+			str++; slen--;
+			continue;
+		}
+		if (slen == 0) return false;
+		if (pat[0] != '?' && str[0] != pat[0]) return false;
+		pat++; plen--;
+		str++; slen--;
+	}
+	return slen == 0 && plen == 0;
+}
+
 BOOL GetProcessFileName(DWORD processID, char* buffer, DWORD maxSize)
 {
 	HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processID);
@@ -226,8 +267,9 @@ BOOL GetProcessFileName(DWORD processID, char* buffer, DWORD maxSize)
 	return TRUE;
 }
 
-void StrRemoveNewlines(char* src, char* dst)
+size_t StrRemoveNewlines(const char* src, char* dst)
 {
+	char* start = dst;
 	char* lastNewlineSequence = nullptr;
 
 	while (*src)
@@ -257,14 +299,9 @@ void StrRemoveNewlines(char* src, char* dst)
 		}
 	}
 
-	if (lastNewlineSequence)
-	{
-		*lastNewlineSequence = '\0';
-	}
-	else
-	{
-		*dst = '\0';
-	}
+	char* end = lastNewlineSequence ? lastNewlineSequence : dst;
+	*end = '\0';
+	return end - start;
 }
 
 DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
@@ -272,6 +309,9 @@ DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 	HANDLE& BufferReadyEvent = bGlobal ? m->GlobalBufferReadyEvent : m->LocalBufferReadyEvent;
 	HANDLE& DataReadyEvent = bGlobal ? m->GlobalDataReadyEvent : m->LocalDataReadyEvent;
 	PDBWIN_PAGE_BUFFER debugMessageBuffer = bGlobal ? m->GlobalDebugBuffer : m->LocalDebugBuffer;
+
+	const char* pattern = m->Pattern;
+	size_t patternLen = pattern ? strlen(pattern) : 0;
 
 	DWORD lastProcessId = 0;
 	char lastProcessFileName[MAX_PATH];
@@ -284,6 +324,12 @@ DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 		if (status != WAIT_OBJECT_0)
 			break;
 
+		char bufferWithoutNewlines[sizeof(debugMessageBuffer->Buffer)];
+		size_t bufferWithoutNewlinesLen = StrRemoveNewlines(debugMessageBuffer->Buffer, bufferWithoutNewlines);
+
+		if (pattern && !match(pattern, patternLen, bufferWithoutNewlines, bufferWithoutNewlinesLen))
+			continue;
+
 		SYSTEMTIME st;
 		GetLocalTime(&st);
 
@@ -294,9 +340,6 @@ DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 				strcpy_s(lastProcessFileName, "<unknown>");
 			}
 		}
-
-		char bufferWithoutNewlines[sizeof(debugMessageBuffer->Buffer)];
-		StrRemoveNewlines(debugMessageBuffer->Buffer, bufferWithoutNewlines);
 
 		printf("%02d:%02d:%02d.%03d %d %s  %s\n",
 			st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
@@ -318,36 +361,72 @@ DWORD WINAPI DbgEventsGlobalThread(PVOID Parameter)
 	return DbgEventsThread(true, (SWinDbgMonitor*)Parameter);
 }
 
-int main()
+int main(int argc, char* argv[])
 {
 	printf("DebugViewMini v%s\n", DBG_VIEW_MINI_VERSION);
 	printf("Listening for OutputDebugString messages...\n");
 
-	auto monitor = new SWinDbgMonitor;
+	bool local = false;
+	bool global = false;
+	const char* pattern = nullptr;
 
-	if (auto status = monitor->Init(false); !status.has_value())
+	for (int i = 1; i < argc; i++)
 	{
-		monitor->UnInit(false);
-		printf("Local capture error: %s (%u)\n", status.error().name, status.error().code);
-	}
-
-	if (HANDLE threadHandle = CreateThread(nullptr, 0, DbgEventsLocalThread, monitor, 0, nullptr))
-	{
-		CloseHandle(threadHandle);
-	}
-
-	if (auto status = monitor->Init(true); !status.has_value())
-	{
-		monitor->UnInit(true);
-		if (status.error().code != ERROR_ACCESS_DENIED)
+		if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--local") == 0)
 		{
-			printf("Global capture error: %s (%u)\n", status.error().name, status.error().code);
+			local = true;
+		}
+		else if (strcmp(argv[i], "-g") == 0 || strcmp(argv[i], "--global") == 0)
+		{
+			global = true;
+		}
+		else if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--pattern") == 0)
+		{
+			if (i + 1 < argc)
+			{
+				pattern = argv[i + 1];
+				i++;
+			}
 		}
 	}
 
-	if (HANDLE threadHandle = CreateThread(nullptr, 0, DbgEventsGlobalThread, monitor, 0, nullptr))
+	if (!local && !global)
 	{
-		CloseHandle(threadHandle);
+		local = true;
+		global = true;
+	}
+
+	auto monitor = new SWinDbgMonitor(pattern);
+
+	if (local)
+	{
+		if (auto status = monitor->Init(false); !status.has_value())
+		{
+			monitor->UnInit(false);
+			printf("Local capture error: %s (%u)\n", status.error().name, status.error().code);
+		}
+
+		if (HANDLE threadHandle = CreateThread(nullptr, 0, DbgEventsLocalThread, monitor, 0, nullptr))
+		{
+			CloseHandle(threadHandle);
+		}
+	}
+
+	if (global)
+	{
+		if (auto status = monitor->Init(true); !status.has_value())
+		{
+			monitor->UnInit(true);
+			if (status.error().code != ERROR_ACCESS_DENIED || !local)
+			{
+				printf("Global capture error: %s (%u)\n", status.error().name, status.error().code);
+			}
+		}
+
+		if (HANDLE threadHandle = CreateThread(nullptr, 0, DbgEventsGlobalThread, monitor, 0, nullptr))
+		{
+			CloseHandle(threadHandle);
+		}
 	}
 
 	// Continue logging in the newly created threads.
