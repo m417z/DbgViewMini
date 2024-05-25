@@ -21,6 +21,7 @@
 #include <stdio.h>
 
 #include <expected>
+#include <optional>
 
 #define DBG_VIEW_MINI_VERSION "0.1"
 
@@ -363,7 +364,7 @@ DWORD WINAPI DbgEventsGlobalThread(PVOID Parameter)
 
 int main(int argc, char* argv[])
 {
-	printf("DebugViewMini v%s\n", DBG_VIEW_MINI_VERSION);
+	printf("DbgViewMini v%s\n", DBG_VIEW_MINI_VERSION);
 	printf("Listening for OutputDebugString messages...\n");
 
 	bool local = false;
@@ -400,33 +401,57 @@ int main(int argc, char* argv[])
 
 	if (local)
 	{
+		std::optional<ERR> error;
 		if (auto status = monitor->Init(false); !status.has_value())
 		{
-			monitor->UnInit(false);
-			printf("Local capture error: %s (%u)\n", status.error().name, status.error().code);
+			error = status.error();
 		}
-
-		if (HANDLE threadHandle = CreateThread(nullptr, 0, DbgEventsLocalThread, monitor, 0, nullptr))
+		else if (HANDLE threadHandle = CreateThread(nullptr, 0, DbgEventsLocalThread, monitor, 0, nullptr); !threadHandle)
+		{
+			error = ERR("CreateThread", GetLastError());
+		}
+		else
 		{
 			CloseHandle(threadHandle);
+		}
+
+		if (error)
+		{
+			monitor->UnInit(false);
+			printf("Local capture error: %s (%u)\n", error->name, error->code);
+			printf("Another DbgViewMini instance (or a similar application) might be running.\n");
 		}
 	}
 
 	if (global)
 	{
+		std::optional<ERR> error;
 		if (auto status = monitor->Init(true); !status.has_value())
 		{
-			monitor->UnInit(true);
-			if (status.error().code != ERROR_ACCESS_DENIED || !local)
-			{
-				printf("Global capture error: %s (%u)\n", status.error().name, status.error().code);
-			}
+			error = status.error();
 		}
-
-		if (HANDLE threadHandle = CreateThread(nullptr, 0, DbgEventsGlobalThread, monitor, 0, nullptr))
+		else if (HANDLE threadHandle = CreateThread(nullptr, 0, DbgEventsGlobalThread, monitor, 0, nullptr); !threadHandle)
+		{
+			error = ERR("CreateThread", GetLastError());
+		}
+		else
 		{
 			CloseHandle(threadHandle);
 		}
+
+		if (error)
+		{
+			monitor->UnInit(true);
+			if (error->code != ERROR_ACCESS_DENIED || !local)
+			{
+				printf("Global capture error: %s (%u)\n", error->name, error->code);
+			}
+		}
+	}
+
+	if (!monitor->LocalCaptureEnabled && !monitor->GlobalCaptureEnabled)
+	{
+		return 1;
 	}
 
 	// Continue logging in the newly created threads.
