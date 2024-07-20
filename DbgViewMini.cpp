@@ -23,7 +23,7 @@
 #include <expected>
 #include <optional>
 
-#define DBG_VIEW_MINI_VERSION "0.1"
+#define DBG_VIEW_MINI_VERSION "1.0"
 
 #define PAGE_SIZE 0x1000
 
