@@ -364,9 +364,6 @@ DWORD WINAPI DbgEventsGlobalThread(PVOID Parameter)
 
 int main(int argc, char* argv[])
 {
-	printf("DbgViewMini v%s\n", DBG_VIEW_MINI_VERSION);
-	printf("Listening for OutputDebugString messages...\n");
-
 	bool local = false;
 	bool global = false;
 	const char* pattern = nullptr;
@@ -388,6 +385,27 @@ int main(int argc, char* argv[])
 				pattern = argv[i + 1];
 				i++;
 			}
+			else
+			{
+				printf("Missing pattern\n");
+				return 1;
+			}
+		}
+		else if (strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--no-buffering") == 0)
+		{
+			setvbuf(stdout, nullptr, _IONBF, 0);
+			setvbuf(stderr, nullptr, _IONBF, 0);
+		}
+		else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0)
+		{
+			printf("DbgViewMini v%s\n", DBG_VIEW_MINI_VERSION);
+			printf("Usage: DbgViewMini.exe [-l|--local] [-g|--global] [-p|--pattern <pattern>] [-n|--no-buffering]\n");
+			return 0;
+		}
+		else
+		{
+			printf("Unknown option: %s\n", argv[i]);
+			return 1;
 		}
 	}
 
@@ -396,6 +414,9 @@ int main(int argc, char* argv[])
 		local = true;
 		global = true;
 	}
+
+	printf("DbgViewMini v%s\n", DBG_VIEW_MINI_VERSION);
+	printf("Listening for OutputDebugString messages...\n");
 
 	static SWinDbgMonitor monitor(pattern);
 
