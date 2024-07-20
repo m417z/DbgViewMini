@@ -397,16 +397,16 @@ int main(int argc, char* argv[])
 		global = true;
 	}
 
-	auto monitor = new SWinDbgMonitor(pattern);
+	static SWinDbgMonitor monitor(pattern);
 
 	if (local)
 	{
 		std::optional<ERR> error;
-		if (auto status = monitor->Init(false); !status.has_value())
+		if (auto status = monitor.Init(false); !status.has_value())
 		{
 			error = status.error();
 		}
-		else if (HANDLE threadHandle = CreateThread(nullptr, 0, DbgEventsLocalThread, monitor, 0, nullptr); !threadHandle)
+		else if (HANDLE threadHandle = CreateThread(nullptr, 0, DbgEventsLocalThread, &monitor, 0, nullptr); !threadHandle)
 		{
 			error = ERR("CreateThread", GetLastError());
 		}
@@ -417,7 +417,7 @@ int main(int argc, char* argv[])
 
 		if (error)
 		{
-			monitor->UnInit(false);
+			monitor.UnInit(false);
 			printf("Local capture error: %s (%u)\n", error->name, error->code);
 			printf("Another DbgViewMini instance (or a similar application) might be running.\n");
 		}
@@ -426,11 +426,11 @@ int main(int argc, char* argv[])
 	if (global)
 	{
 		std::optional<ERR> error;
-		if (auto status = monitor->Init(true); !status.has_value())
+		if (auto status = monitor.Init(true); !status.has_value())
 		{
 			error = status.error();
 		}
-		else if (HANDLE threadHandle = CreateThread(nullptr, 0, DbgEventsGlobalThread, monitor, 0, nullptr); !threadHandle)
+		else if (HANDLE threadHandle = CreateThread(nullptr, 0, DbgEventsGlobalThread, &monitor, 0, nullptr); !threadHandle)
 		{
 			error = ERR("CreateThread", GetLastError());
 		}
@@ -441,7 +441,7 @@ int main(int argc, char* argv[])
 
 		if (error)
 		{
-			monitor->UnInit(true);
+			monitor.UnInit(true);
 			if (error->code != ERROR_ACCESS_DENIED || !local)
 			{
 				printf("Global capture error: %s (%u)\n", error->name, error->code);
@@ -449,7 +449,7 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	if (!monitor->LocalCaptureEnabled && !monitor->GlobalCaptureEnabled)
+	if (!monitor.LocalCaptureEnabled && !monitor.GlobalCaptureEnabled)
 	{
 		return 1;
 	}
