@@ -118,12 +118,14 @@ struct SWinDbgMonitor
 		maximumSize.QuadPart = PAGE_SIZE;
 		viewSize = sizeof(DBWIN_PAGE_BUFFER);
 
-		if (!(BufferReadyEvent = CreateEvent(&SecurityAttributes, FALSE, FALSE, bGlobal ? L"Global\\" DBWIN_BUFFER_READY : L"Local\\" DBWIN_BUFFER_READY)))
+		if (!(BufferReadyEvent = CreateEvent(&SecurityAttributes, FALSE, FALSE, bGlobal ? L"Global\\" DBWIN_BUFFER_READY : L"Local\\" DBWIN_BUFFER_READY)) ||
+			GetLastError() == ERROR_ALREADY_EXISTS)
 		{
 			return std::unexpected(ERR("DBWIN_BUFFER_READY", GetLastError()));
 		}
 
-		if (!(DataReadyEvent = CreateEvent(&SecurityAttributes, FALSE, FALSE, bGlobal ? L"Global\\" DBWIN_DATA_READY : L"Local\\" DBWIN_DATA_READY)))
+		if (!(DataReadyEvent = CreateEvent(&SecurityAttributes, FALSE, FALSE, bGlobal ? L"Global\\" DBWIN_DATA_READY : L"Local\\" DBWIN_DATA_READY)) ||
+			GetLastError() == ERROR_ALREADY_EXISTS)
 		{
 			return std::unexpected(ERR("DBWIN_DATA_READY", GetLastError()));
 		}
@@ -135,7 +137,7 @@ struct SWinDbgMonitor
 			maximumSize.HighPart,
 			maximumSize.LowPart,
 			bGlobal ? L"Global\\" DBWIN_BUFFER : L"Local\\" DBWIN_BUFFER
-		)))
+		)) || GetLastError() == ERROR_ALREADY_EXISTS)
 		{
 			return std::unexpected(ERR("CreateFileMapping", GetLastError()));
 		}
