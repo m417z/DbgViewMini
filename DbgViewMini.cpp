@@ -19,6 +19,7 @@
 #include <Sddl.h>
 #include <tlhelp32.h>
 
+#include <locale.h>
 #include <stdio.h>
 
 #include <expected>
@@ -30,9 +31,9 @@
 
 #define PAGE_SIZE 0x1000
 
-#define DBWIN_BUFFER_READY "DBWIN_BUFFER_READY"
-#define DBWIN_DATA_READY "DBWIN_DATA_READY"
-#define DBWIN_BUFFER "DBWIN_BUFFER"
+#define DBWIN_BUFFER_READY L"DBWIN_BUFFER_READY"
+#define DBWIN_DATA_READY L"DBWIN_DATA_READY"
+#define DBWIN_BUFFER L"DBWIN_BUFFER"
 
 // The Win32 OutputDebugString buffer.
 typedef struct _DBWIN_PAGE_BUFFER
@@ -94,7 +95,7 @@ struct SWinDbgMonitor
 		SecurityAttributes.nLength = sizeof(SECURITY_ATTRIBUTES);
 		SecurityAttributes.bInheritHandle = FALSE;
 		return ConvertStringSecurityDescriptorToSecurityDescriptor(
-			"D:(A;;GRGWGX;;;WD)(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGWGX;;;AN)(A;;GRGWGX;;;RC)(A;;GRGWGX;;;S-1-15-2-1)S:(ML;;NW;;;LW)",
+			L"D:(A;;GRGWGX;;;WD)(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGWGX;;;AN)(A;;GRGWGX;;;RC)(A;;GRGWGX;;;S-1-15-2-1)S:(ML;;NW;;;LW)",
 			SDDL_REVISION, &SecurityAttributes.lpSecurityDescriptor, NULL);
 	}
 
@@ -121,13 +122,13 @@ struct SWinDbgMonitor
 		maximumSize.QuadPart = PAGE_SIZE;
 		viewSize = sizeof(DBWIN_PAGE_BUFFER);
 
-		if (!(BufferReadyEvent = CreateEvent(&SecurityAttributes, FALSE, FALSE, bGlobal ? "Global\\" DBWIN_BUFFER_READY : "Local\\" DBWIN_BUFFER_READY)) ||
+		if (!(BufferReadyEvent = CreateEvent(&SecurityAttributes, FALSE, FALSE, bGlobal ? L"Global\\" DBWIN_BUFFER_READY : L"Local\\" DBWIN_BUFFER_READY)) ||
 			GetLastError() == ERROR_ALREADY_EXISTS)
 		{
 			return std::unexpected(ERR("DBWIN_BUFFER_READY", GetLastError()));
 		}
 
-		if (!(DataReadyEvent = CreateEvent(&SecurityAttributes, FALSE, FALSE, bGlobal ? "Global\\" DBWIN_DATA_READY : "Local\\" DBWIN_DATA_READY)) ||
+		if (!(DataReadyEvent = CreateEvent(&SecurityAttributes, FALSE, FALSE, bGlobal ? L"Global\\" DBWIN_DATA_READY : L"Local\\" DBWIN_DATA_READY)) ||
 			GetLastError() == ERROR_ALREADY_EXISTS)
 		{
 			return std::unexpected(ERR("DBWIN_DATA_READY", GetLastError()));
@@ -139,7 +140,7 @@ struct SWinDbgMonitor
 			PAGE_READWRITE,
 			maximumSize.HighPart,
 			maximumSize.LowPart,
-			bGlobal ? "Global\\" DBWIN_BUFFER : "Local\\" DBWIN_BUFFER
+			bGlobal ? L"Global\\" DBWIN_BUFFER : L"Local\\" DBWIN_BUFFER
 		)) || GetLastError() == ERROR_ALREADY_EXISTS)
 		{
 			return std::unexpected(ERR("CreateFileMapping", GetLastError()));
@@ -240,7 +241,7 @@ bool match(const char* pat, size_t plen, const char* str, size_t slen)
 	return slen == 0 && plen == 0;
 }
 
-std::unordered_map<DWORD, std::string> GetProcessNames()
+std::unordered_map<DWORD, std::wstring> GetProcessNames()
 {
 	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (hSnapshot == INVALID_HANDLE_VALUE)
@@ -248,7 +249,7 @@ std::unordered_map<DWORD, std::string> GetProcessNames()
 		return {};
 	}
 
-	std::unordered_map<DWORD, std::string> result;
+	std::unordered_map<DWORD, std::wstring> result;
 
 	PROCESSENTRY32 pe32;
 	pe32.dwSize = sizeof(PROCESSENTRY32);
@@ -311,7 +312,7 @@ DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 	const char* pattern = m->Pattern;
 	size_t patternLen = pattern ? strlen(pattern) : 0;
 
-	std::unordered_map<DWORD, std::string> processNames;
+	std::unordered_map<DWORD, std::wstring> processNames;
 	DWORD processNamesTickCount = 0;
 
 	while (TRUE)
@@ -328,6 +329,11 @@ DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 		if (pattern && !match(pattern, patternLen, bufferWithoutNewlines, bufferWithoutNewlinesLen))
 			continue;
 
+		// No single multi-byte ANSI character can ever be encoded as more than two 2-byte codeunits in UTF-16.
+		// https://stackoverflow.com/a/35190360
+		WCHAR bufferWide[sizeof(debugMessageBuffer->Buffer) * 2];
+		MultiByteToWideChar(CP_ACP, 0, bufferWithoutNewlines, bufferWithoutNewlinesLen + 1, bufferWide, ARRAYSIZE(bufferWide));
+
 		SYSTEMTIME st;
 		GetLocalTime(&st);
 
@@ -336,7 +342,7 @@ DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 			processNames.clear();
 		}
 
-		const char* processName;
+		PCWSTR processName;
 		if (auto it = processNames.find(debugMessageBuffer->ProcessId); it != processNames.end())
 		{
 			processName = it->second.c_str();
@@ -352,15 +358,15 @@ DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 			}
 			else
 			{
-				processName = "<unknown>";
+				processName = L"<unknown>";
 			}
 		}
 
-		printf("%02d:%02d:%02d.%03d %d %s  %s\n",
+		wprintf(L"%02d:%02d:%02d.%03d %d %s  %s\n",
 			st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
 			debugMessageBuffer->ProcessId,
 			processName,
-			bufferWithoutNewlines);
+			bufferWide);
 	}
 
 	return 0;
@@ -383,6 +389,9 @@ void PrintBanner()
 
 int main(int argc, char* argv[])
 {
+	SetConsoleOutputCP(CP_UTF8);
+	setlocale(LC_ALL, ".UTF8");
+
 	bool local = false;
 	bool global = false;
 	const char* pattern = nullptr;
