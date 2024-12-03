@@ -29,7 +29,7 @@
 
 using namespace std::string_view_literals;
 
-#define DBG_VIEW_MINI_VERSION "1.0.3"
+#define DBG_VIEW_MINI_VERSION "1.0.4"
 
 #define PAGE_SIZE 0x1000
 
