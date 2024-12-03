@@ -19,13 +19,15 @@
 #include <Sddl.h>
 #include <tlhelp32.h>
 
-#include <locale.h>
 #include <stdio.h>
 
 #include <expected>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+
+using namespace std::string_view_literals;
 
 #define DBG_VIEW_MINI_VERSION "1.0.3"
 
@@ -303,6 +305,42 @@ size_t StrRemoveNewlines(const char* src, char* dst)
 	return end - start;
 }
 
+std::wstring StrA2W(std::string_view str, UINT codePage = CP_ACP)
+{
+	std::wstring result;
+
+	int strLen = static_cast<int>(str.size());
+	if (strLen > 0)
+	{
+		int sizeNeeded = MultiByteToWideChar(codePage, 0, str.data(), strLen, nullptr, 0);
+		if (sizeNeeded > 0)
+		{
+			result.resize(sizeNeeded);
+			MultiByteToWideChar(codePage, 0, str.data(), strLen, result.data(), sizeNeeded);
+		}
+	}
+
+	return result;
+}
+
+std::string StrW2A(std::wstring_view str, UINT codePage = CP_ACP)
+{
+	std::string result;
+
+	int strLen = static_cast<int>(str.size());
+	if (strLen > 0)
+	{
+		int sizeNeeded = WideCharToMultiByte(codePage, 0, str.data(), strLen, nullptr, 0, nullptr, nullptr);
+		if (sizeNeeded > 0)
+		{
+			result.resize(sizeNeeded);
+			WideCharToMultiByte(codePage, 0, str.data(), strLen, result.data(), sizeNeeded, nullptr, nullptr);
+		}
+	}
+
+	return result;
+}
+
 DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 {
 	HANDLE& BufferReadyEvent = bGlobal ? m->GlobalBufferReadyEvent : m->LocalBufferReadyEvent;
@@ -329,11 +367,6 @@ DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 		if (pattern && !match(pattern, patternLen, bufferWithoutNewlines, bufferWithoutNewlinesLen))
 			continue;
 
-		// No single multi-byte ANSI character can ever be encoded as more than two 2-byte codeunits in UTF-16.
-		// https://stackoverflow.com/a/35190360
-		WCHAR bufferWide[sizeof(debugMessageBuffer->Buffer) * 2];
-		MultiByteToWideChar(CP_ACP, 0, bufferWithoutNewlines, bufferWithoutNewlinesLen + 1, bufferWide, ARRAYSIZE(bufferWide));
-
 		SYSTEMTIME st;
 		GetLocalTime(&st);
 
@@ -342,10 +375,10 @@ DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 			processNames.clear();
 		}
 
-		PCWSTR processName;
+		std::wstring_view processName;
 		if (auto it = processNames.find(debugMessageBuffer->ProcessId); it != processNames.end())
 		{
-			processName = it->second.c_str();
+			processName = it->second;
 		}
 		else
 		{
@@ -354,19 +387,24 @@ DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 
 			if (auto it = processNames.find(debugMessageBuffer->ProcessId); it != processNames.end())
 			{
-				processName = it->second.c_str();
+				processName = it->second;
 			}
 			else
 			{
-				processName = L"<unknown>";
+				processName = L"<unknown>"sv;
 			}
 		}
 
-		wprintf(L"%02d:%02d:%02d.%03d %d %s  %s\n",
+		// Convert manually to UTF-8. Using wprintf doesn't work for some characters such as emojis.
+		// https://stackoverflow.com/q/77247757
+		auto processNameUtf8 = StrW2A(processName, CP_UTF8);
+		auto bufferWithoutNewlinesUtf8 = StrW2A(StrA2W(bufferWithoutNewlines), CP_UTF8);
+
+		printf("%02d:%02d:%02d.%03d %d %s  %s\n",
 			st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
 			debugMessageBuffer->ProcessId,
-			processName,
-			bufferWide);
+			processNameUtf8.c_str(),
+			bufferWithoutNewlinesUtf8.c_str());
 	}
 
 	return 0;
@@ -390,7 +428,6 @@ void PrintBanner()
 int main(int argc, char* argv[])
 {
 	SetConsoleOutputCP(CP_UTF8);
-	setlocale(LC_ALL, ".UTF8");
 
 	bool local = false;
 	bool global = false;
