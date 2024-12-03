@@ -27,7 +27,7 @@
 #include <string>
 #include <unordered_map>
 
-#define DBG_VIEW_MINI_VERSION "1.0.2"
+#define DBG_VIEW_MINI_VERSION "1.0.3"
 
 #define PAGE_SIZE 0x1000
 
