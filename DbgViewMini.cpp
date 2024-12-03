@@ -27,9 +27,9 @@
 
 #define PAGE_SIZE 0x1000
 
-#define DBWIN_BUFFER_READY L"DBWIN_BUFFER_READY"
-#define DBWIN_DATA_READY L"DBWIN_DATA_READY"
-#define DBWIN_BUFFER L"DBWIN_BUFFER"
+#define DBWIN_BUFFER_READY "DBWIN_BUFFER_READY"
+#define DBWIN_DATA_READY "DBWIN_DATA_READY"
+#define DBWIN_BUFFER "DBWIN_BUFFER"
 
 // The Win32 OutputDebugString buffer.
 typedef struct _DBWIN_PAGE_BUFFER
@@ -91,7 +91,7 @@ struct SWinDbgMonitor
 		SecurityAttributes.nLength = sizeof(SECURITY_ATTRIBUTES);
 		SecurityAttributes.bInheritHandle = FALSE;
 		return ConvertStringSecurityDescriptorToSecurityDescriptor(
-			L"D:(A;;GRGWGX;;;WD)(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGWGX;;;AN)(A;;GRGWGX;;;RC)(A;;GRGWGX;;;S-1-15-2-1)S:(ML;;NW;;;LW)",
+			"D:(A;;GRGWGX;;;WD)(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGWGX;;;AN)(A;;GRGWGX;;;RC)(A;;GRGWGX;;;S-1-15-2-1)S:(ML;;NW;;;LW)",
 			SDDL_REVISION, &SecurityAttributes.lpSecurityDescriptor, NULL);
 	}
 
@@ -118,13 +118,13 @@ struct SWinDbgMonitor
 		maximumSize.QuadPart = PAGE_SIZE;
 		viewSize = sizeof(DBWIN_PAGE_BUFFER);
 
-		if (!(BufferReadyEvent = CreateEvent(&SecurityAttributes, FALSE, FALSE, bGlobal ? L"Global\\" DBWIN_BUFFER_READY : L"Local\\" DBWIN_BUFFER_READY)) ||
+		if (!(BufferReadyEvent = CreateEvent(&SecurityAttributes, FALSE, FALSE, bGlobal ? "Global\\" DBWIN_BUFFER_READY : "Local\\" DBWIN_BUFFER_READY)) ||
 			GetLastError() == ERROR_ALREADY_EXISTS)
 		{
 			return std::unexpected(ERR("DBWIN_BUFFER_READY", GetLastError()));
 		}
 
-		if (!(DataReadyEvent = CreateEvent(&SecurityAttributes, FALSE, FALSE, bGlobal ? L"Global\\" DBWIN_DATA_READY : L"Local\\" DBWIN_DATA_READY)) ||
+		if (!(DataReadyEvent = CreateEvent(&SecurityAttributes, FALSE, FALSE, bGlobal ? "Global\\" DBWIN_DATA_READY : "Local\\" DBWIN_DATA_READY)) ||
 			GetLastError() == ERROR_ALREADY_EXISTS)
 		{
 			return std::unexpected(ERR("DBWIN_DATA_READY", GetLastError()));
@@ -136,7 +136,7 @@ struct SWinDbgMonitor
 			PAGE_READWRITE,
 			maximumSize.HighPart,
 			maximumSize.LowPart,
-			bGlobal ? L"Global\\" DBWIN_BUFFER : L"Local\\" DBWIN_BUFFER
+			bGlobal ? "Global\\" DBWIN_BUFFER : "Local\\" DBWIN_BUFFER
 		)) || GetLastError() == ERROR_ALREADY_EXISTS)
 		{
 			return std::unexpected(ERR("CreateFileMapping", GetLastError()));
