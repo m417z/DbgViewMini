@@ -17,11 +17,14 @@
 
 #include <Windows.h>
 #include <Sddl.h>
+#include <tlhelp32.h>
 
 #include <stdio.h>
 
 #include <expected>
 #include <optional>
+#include <string>
+#include <unordered_map>
 
 #define DBG_VIEW_MINI_VERSION "1.0.2"
 
@@ -237,37 +240,29 @@ bool match(const char* pat, size_t plen, const char* str, size_t slen)
 	return slen == 0 && plen == 0;
 }
 
-BOOL GetProcessFileName(DWORD processID, char* buffer, DWORD maxSize)
+std::unordered_map<DWORD, std::string> GetProcessNames()
 {
-	HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processID);
-	if (!hProcess)
+	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (hSnapshot == INVALID_HANDLE_VALUE)
 	{
-		return FALSE;
+		return {};
 	}
 
-	char fullPath[MAX_PATH];
-	DWORD size = MAX_PATH;
+	std::unordered_map<DWORD, std::string> result;
 
-	if (!QueryFullProcessImageNameA(hProcess, 0, fullPath, &size))
+	PROCESSENTRY32 pe32;
+	pe32.dwSize = sizeof(PROCESSENTRY32);
+
+	if (Process32First(hSnapshot, &pe32))
 	{
-		CloseHandle(hProcess);
-		return FALSE;
+		do
+		{
+			result.try_emplace(pe32.th32ProcessID, pe32.szExeFile);
+		} while (Process32Next(hSnapshot, &pe32));
 	}
 
-	const char* fileName = strrchr(fullPath, '\\');
-	if (fileName)
-	{
-		fileName++;
-	}
-	else
-	{
-		fileName = fullPath;
-	}
-
-	strncpy_s(buffer, maxSize, fileName, maxSize - 1);
-
-	CloseHandle(hProcess);
-	return TRUE;
+	CloseHandle(hSnapshot);
+	return result;
 }
 
 size_t StrRemoveNewlines(const char* src, char* dst)
@@ -316,8 +311,8 @@ DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 	const char* pattern = m->Pattern;
 	size_t patternLen = pattern ? strlen(pattern) : 0;
 
-	DWORD lastProcessId = 0;
-	char lastProcessFileName[MAX_PATH];
+	std::unordered_map<DWORD, std::string> processNames;
+	DWORD processNamesTickCount = 0;
 
 	while (TRUE)
 	{
@@ -336,18 +331,35 @@ DWORD DbgEventsThread(bool bGlobal, SWinDbgMonitor* m)
 		SYSTEMTIME st;
 		GetLocalTime(&st);
 
-		if (debugMessageBuffer->ProcessId != lastProcessId)
+		if (GetTickCount() - processNamesTickCount > 1000 * 60)
 		{
-			lastProcessId = debugMessageBuffer->ProcessId;
-			if (!GetProcessFileName(debugMessageBuffer->ProcessId, lastProcessFileName, MAX_PATH)) {
-				strcpy_s(lastProcessFileName, "<unknown>");
+			processNames.clear();
+		}
+
+		const char* processName;
+		if (auto it = processNames.find(debugMessageBuffer->ProcessId); it != processNames.end())
+		{
+			processName = it->second.c_str();
+		}
+		else
+		{
+			processNames = GetProcessNames();
+			processNamesTickCount = GetTickCount();
+
+			if (auto it = processNames.find(debugMessageBuffer->ProcessId); it != processNames.end())
+			{
+				processName = it->second.c_str();
+			}
+			else
+			{
+				processName = "<unknown>";
 			}
 		}
 
 		printf("%02d:%02d:%02d.%03d %d %s  %s\n",
 			st.wHour, st.wMinute, st.wSecond, st.wMilliseconds,
 			debugMessageBuffer->ProcessId,
-			lastProcessFileName,
+			processName,
 			bufferWithoutNewlines);
 	}
 
